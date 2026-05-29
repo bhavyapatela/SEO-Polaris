@@ -8,7 +8,10 @@ st.title("SEO Polaris")
 st.subheader("Whistle SEO Dashboard")
 
 #Load Chart Sheet
-df = pd.read_excel("Data/whistle_data.xlsx", sheet_name="Queries")
+df = pd.read_excel("Data/whistle_data.xlsx", sheet_name="Chart")
+
+#Date input
+start_date = st.sidebar.date_input("Start date")
 
 # Calculate KPIs
 total_clicks = df['Clicks'].sum()
@@ -24,5 +27,18 @@ col2.metric("Total Impressions", f"{total_impressions:,.0f}")
 col3.metric("Average CTR", f"{avg_ctr:.2f}%")
 col4.metric("Average Position", f"{avg_position:.2f}")
 
-#Date input
-start_date = st.sidebar.date_input("Start date")
+st.subheader("Clicks Trend")
+st.line_chart(df.set_index("Date")["Clicks"])
+
+st.subheader("Impression Trend")
+st.line_chart(df.set_index("Date")["Impressions"])
+
+st.subheader("CTR Trend")
+st.line_chart(df.set_index("Date")["CTR"])
+
+st.subheader("Position Trend")
+st.line_chart(df.set_index("Date")["Position"])
+
+st.subheader("Raw Data")
+
+st.dataframe(df)
