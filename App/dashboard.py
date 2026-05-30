@@ -3,6 +3,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import numpy as np
 
 # Page configuration
 st.set_page_config(
@@ -98,6 +99,18 @@ st.markdown("""
             background-color: #6b46c1 !important;
             color: white !important;
         }
+        
+        /* API Badge styling */
+        .api-badge {
+            background: linear-gradient(90deg, #8a2be2 0%, #ff007f 100%);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -109,7 +122,6 @@ def load_gsc_data(file_path):
         xls = pd.ExcelFile(file_path)
         data = {}
         for sheet in xls.sheet_names:
-            # GSC can have lowercase/uppercase variants
             sheet_key = sheet.lower().replace(" ", "_")
             df = pd.read_excel(file_path, sheet_name=sheet)
             data[sheet_key] = df
@@ -128,13 +140,12 @@ if gsc_data is None:
 # ----------------- SIDEBAR CONTROLS -----------------
 
 st.sidebar.title("🌌 SEO Polaris")
-st.sidebar.markdown("*SEO Intelligence Engine v1.0*")
+st.sidebar.markdown("*SEO Intelligence Engine v1.1*")
 st.sidebar.write("---")
 
 # File Upload Overrides
 uploaded_file = st.sidebar.file_uploader("Upload GSC Excel Export", type=["xlsx"])
 if uploaded_file is not None:
-    # Save temp and override gsc_data
     with open("Data/temp_upload.xlsx", "wb") as f:
         f.write(uploaded_file.getbuffer())
     gsc_data = load_gsc_data("Data/temp_upload.xlsx")
@@ -157,30 +168,34 @@ if chart_df is not None:
 else:
     date_range = None
 
-st.sidebar.subheader("⚙️ Analysis Settings")
+# Advanced PM Insights Toggles in Sidebar
+st.sidebar.subheader("🛡️ Brand Segmentation")
 brand_term = st.sidebar.text_input("Brand Keywords (comma-separated)", "whistle")
+brand_filter = st.sidebar.selectbox(
+    "Global Brand Mode",
+    ["Show All Clicks", "Brand Queries Only", "Exclude Brand (Generic Only)"]
+)
+
+# Helper function for brand matching
+brand_terms_list = [term.strip().lower() for term in brand_term.split(",") if term.strip()]
+def is_brand(query):
+    query_str = str(query).lower()
+    return any(bt in query_str for bt in brand_terms_list)
 
 # ----------------- HELPER FUNCTIONS -----------------
 
 def get_pop_metrics(df, start_d, end_d):
-    """Calculates metrics for current period vs previous period of same duration."""
     df_sorted = df.sort_values('Date')
-    
-    # Filter current period
     curr_mask = (df_sorted['Date'] >= pd.Timestamp(start_d)) & (df_sorted['Date'] <= pd.Timestamp(end_d))
     curr_df = df_sorted[curr_mask]
     
-    # Determine timeframe duration
     duration = (end_d - start_d).days + 1
-    
-    # Calculate previous period start/end
     prev_end = start_d - timedelta(days=1)
     prev_start = prev_end - timedelta(days=duration - 1)
     
     prev_mask = (df_sorted['Date'] >= pd.Timestamp(prev_start)) & (df_sorted['Date'] <= pd.Timestamp(prev_end))
     prev_df = df_sorted[prev_mask]
     
-    # Fallback to splitting dataset if no previous period exists in GSC data
     if prev_df.empty or len(prev_df) < 2:
         half_len = len(curr_df) // 2
         if half_len > 0:
@@ -189,13 +204,11 @@ def get_pop_metrics(df, start_d, end_d):
         else:
             prev_df = curr_df
             
-    # Calculate totals
     c_clicks = curr_df['Clicks'].sum()
     p_clicks = prev_df['Clicks'].sum()
     c_imp = curr_df['Impressions'].sum()
     p_imp = prev_df['Impressions'].sum()
     
-    # Avoid zero division
     c_ctr = (c_clicks / c_imp * 100) if c_imp > 0 else 0
     p_ctr = (p_clicks / p_imp * 100) if p_imp > 0 else 0
     
@@ -222,6 +235,12 @@ else:
     start_date, end_date = min_date, max_date
 
 pop = get_pop_metrics(chart_df, start_date, end_date)
+
+# ----------------- UI BRAND FILTER INFO BANNER -----------------
+# Because GSC Excel sheets are pre-aggregated, we apply the Brand filter to the Queries dataset.
+# We will notify the user if they filter out brand keywords.
+if brand_filter != "Show All Clicks":
+    st.sidebar.info("💡 Note: Brand filtering applies to queries. Pre-aggregated reports (e.g. Device splits) will reflect totals.")
 
 # Header title
 st.title("🌌 SEO Polaris")
@@ -253,7 +272,6 @@ with col2:
 with col3:
     render_kpi_card("Average CTR", f"{pop['ctr'][0]:.2f}%", pop['ctr'][1], "vs prev period")
 with col4:
-    # Lower position is better
     render_kpi_card("Average Position", f"{pop['position'][0]:.2f}", pop['position'][1], "vs prev period")
 
 st.write("---")
@@ -264,18 +282,16 @@ tab_overview, tab_queries, tab_pages, tab_intelligence = st.tabs([
     "📈 Overview Trends", 
     "🔍 Queries Explorer", 
     "📄 Pages Explorer", 
-    "💡 Search Intelligence"
+    "💡 Search Intelligence Hub"
 ])
 
 # ----------------- TAB 1: OVERVIEW TRENDS -----------------
 with tab_overview:
-    # Filtering Chart df based on dates
     mask = (chart_df['Date'] >= pd.Timestamp(start_date)) & (chart_df['Date'] <= pd.Timestamp(end_date))
     filtered_chart = chart_df[mask].sort_values('Date')
     
     st.markdown("### Search Performance Trends")
     
-    # Dual Axis Trend using Plotly
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=filtered_chart['Date'], y=filtered_chart['Clicks'],
@@ -295,21 +311,15 @@ with tab_overview:
         plot_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         yaxis=dict(
-            title=dict(
-                text="Clicks",
-                font=dict(color="#8a2be2")
-            ),
+            title=dict(text="Clicks", font=dict(color="#8a2be2")),
             tickfont=dict(color="#8a2be2")
         ),
         yaxis2=dict(
-            title=dict(
-                text="Position (Rank)",
-                font=dict(color="#ff007f")
-            ),
+            title=dict(text="Position (Rank)", font=dict(color="#ff007f")),
             tickfont=dict(color="#ff007f"),
             overlaying="y",
             side="right",
-            autorange="reversed" # Rank #1 at the top
+            autorange="reversed"
         ),
         xaxis=dict(showgrid=False)
     )
@@ -319,21 +329,23 @@ with tab_overview:
     c_split1, c_split2 = st.columns(2)
     
     with c_split1:
-        st.markdown("#### 📱 Device Share (Clicks)")
+        st.markdown("#### 📱 Device Click Share & CTR")
         device_df = gsc_data.get('devices')
         if device_df is not None:
-            fig_dev = px.pie(
-                device_df, 
-                names='Device', 
-                values='Clicks', 
-                hole=0.5,
-                color_discrete_sequence=px.colors.sequential.Purples_r
+            # Side-by-side metrics: click distribution vs CTR discrepancy
+            dev_formatted = device_df.copy()
+            dev_formatted['CTR'] = dev_formatted['CTR'] * 100
+            
+            fig_dev = px.bar(
+                dev_formatted,
+                x='Device',
+                y='Clicks',
+                color='CTR',
+                color_continuous_scale='Purples',
+                text_auto='.2s',
+                title="Clicks & CTR by Device Category"
             )
-            fig_dev.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)", 
-                plot_bgcolor="rgba(0,0,0,0)", 
-                font=dict(color="white")
-            )
+            fig_dev.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
             st.plotly_chart(fig_dev, use_container_width=True)
         else:
             st.info("No device data sheet found.")
@@ -351,11 +363,7 @@ with tab_overview:
                 color_continuous_scale='Purples',
                 title="Top 10 Countries by Clicks & CTR"
             )
-            fig_cnt.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)", 
-                plot_bgcolor="rgba(0,0,0,0)", 
-                font=dict(color="white")
-            )
+            fig_cnt.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
             st.plotly_chart(fig_cnt, use_container_width=True)
         else:
             st.info("No country data sheet found.")
@@ -365,55 +373,62 @@ with tab_queries:
     queries_df = gsc_data.get('queries')
     if queries_df is not None:
         st.markdown("### Search Queries Explorer")
-        st.markdown("Analyze search terms driving impressions and clicks to your brand.")
         
-        # Sidebar-styled filters inside tab for better UX
-        f_col1, f_col2, f_col3 = st.columns([2, 1, 1])
-        
+        f_col1, f_col2 = st.columns([3, 1])
         with f_col1:
-            q_search = st.text_input("🔍 Search Query Keyword", "")
+            q_search = st.text_input("🔍 Filter keywords", "")
         with f_col2:
-            brand_filter = st.selectbox(
-                "Segment Type",
-                ["All Queries", "Brand Only", "Non-Brand Only"]
-            )
-        with f_col3:
-            min_clicks = st.number_input("Min Clicks", min_value=0, value=0)
+            min_clicks = st.number_input("Min Clicks threshold", min_value=0, value=0, key="queries_min_clicks")
             
-        # Segment and filter data
         filtered_q = queries_df.copy()
         
-        # Brand filter logic
-        brand_terms_list = [term.strip().lower() for term in brand_term.split(",") if term.strip()]
-        
-        def is_brand(query):
-            query_str = str(query).lower()
-            return any(bt in query_str for bt in brand_terms_list)
-            
-        if brand_filter == "Brand Only":
+        # Apply the Sidebar Brand Filter
+        if brand_filter == "Brand Queries Only":
             filtered_q = filtered_q[filtered_q['Top queries'].apply(is_brand)]
-        elif brand_filter == "Non-Brand Only":
+        elif brand_filter == "Exclude Brand (Generic Only)":
             filtered_q = filtered_q[~filtered_q['Top queries'].apply(is_brand)]
             
         if q_search:
             filtered_q = filtered_q[filtered_q['Top queries'].astype(str).str.contains(q_search, case=False)]
             
         filtered_q = filtered_q[filtered_q['Clicks'] >= min_clicks]
-        
-        # Double format percentages
         formatted_q = filtered_q.copy()
         formatted_q['CTR'] = formatted_q['CTR'] * 100
         
-        st.markdown(f"**Found {len(formatted_q)} matching search queries**")
-        st.dataframe(
-            formatted_q.style.format({
-                "Clicks": "{:,.0f}",
-                "Impressions": "{:,.0f}",
-                "CTR": "{:.2f}%",
-                "Position": "{:.2f}"
-            }),
-            use_container_width=True
-        )
+        # Brand breakdown metrics
+        br_clicks = queries_df[queries_df['Top queries'].apply(is_brand)]['Clicks'].sum()
+        non_br_clicks = queries_df[~queries_df['Top queries'].apply(is_brand)]['Clicks'].sum()
+        total_q_clicks = br_clicks + non_br_clicks
+        
+        b_col1, b_col2 = st.columns([3, 1])
+        with b_col1:
+            st.markdown(f"**Found {len(formatted_q)} matching search queries**")
+            st.dataframe(
+                formatted_q.style.format({
+                    "Clicks": "{:,.0f}",
+                    "Impressions": "{:,.0f}",
+                    "CTR": "{:.2f}%",
+                    "Position": "{:.2f}"
+                }),
+                use_container_width=True
+            )
+        with b_col2:
+            st.markdown("#### 🏷️ Brand Traffic Split")
+            brand_pie = pd.DataFrame({
+                "Segment": ["Branded", "Generic (Non-Brand)"],
+                "Clicks": [br_clicks, non_br_clicks]
+            })
+            fig_brand_pie = px.pie(
+                brand_pie, 
+                names="Segment", 
+                values="Clicks", 
+                hole=0.4,
+                color_discrete_sequence=["#8a2be2", "#ff007f"]
+            )
+            fig_brand_pie.update_layout(showlegend=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_brand_pie, use_container_width=True)
+            st.metric("Branded Clicks", f"{br_clicks:,.0f}", f"{(br_clicks/total_q_clicks * 100):.1f}% of total")
+            st.metric("Generic Clicks", f"{non_br_clicks:,.0f}", f"{(non_br_clicks/total_q_clicks * 100):.1f}% of total")
     else:
         st.error("No queries dataset found.")
 
@@ -423,13 +438,12 @@ with tab_pages:
     if pages_df is not None:
         st.markdown("### Landing Pages Explorer")
         
-        p_search = st.text_input("🔍 Search Page URL", "")
+        p_search = st.text_input("🔍 Search Page URL", "", key="page_search_input")
         
         filtered_p = pages_df.copy()
         if p_search:
             filtered_p = filtered_p[filtered_p['Top pages'].astype(str).str.contains(p_search, case=False)]
             
-        # Metrics enhancement: categorizing tiers
         def categorize_page(row):
             if row['Clicks'] > pages_df['Clicks'].quantile(0.9):
                 return "🌟 Star Performers (Top 10%)"
@@ -441,12 +455,9 @@ with tab_pages:
                 return "🔍 Longtail / Low Traffic"
                 
         filtered_p['Performance Category'] = filtered_p.apply(categorize_page, axis=1)
-        
-        # Format CTR
         formatted_p = filtered_p.copy()
         formatted_p['CTR'] = formatted_p['CTR'] * 100
         
-        # Layout splitting: Categories and Table
         p_col1, p_col2 = st.columns([1, 3])
         
         with p_col1:
@@ -473,73 +484,145 @@ with tab_pages:
 
 # ----------------- TAB 4: SEARCH INTELLIGENCE REPORTS -----------------
 with tab_intelligence:
-    st.markdown("### Actionable Daily Search Insights")
+    st.markdown("### Actionable Search Intelligence Hub")
     
-    report_type = st.selectbox(
-        "Select intelligence report",
-        ["🎯 Striking Distance Optimization Report", "💡 Rich Snippet & Search Appearance Leaderboard"]
+    intel_mode = st.radio(
+        "Choose Insights View",
+        ["🎯 Striking Distance & Click Potential", "📉 Content Decay Alert (API Feature Simulation)", "📱 Device CTR Discrepancy Analysis"],
+        horizontal=True
     )
     
-    if report_type == "🎯 Striking Distance Optimization Report":
-        st.markdown("#### Pages and Queries Ranking on Page 2 (Positions 11–20) or Striking Distance (4–10)")
-        st.markdown("Optimize these queries/pages because they have search impressions, but just need a boost in ranking or CTR to generate substantial clicks.")
+    if intel_mode == "🎯 Striking Distance & Click Potential":
+        st.markdown("#### Striking Distance Optimization Report")
+        st.markdown("Keywords or pages ranking in positions 4–15. We compute the **Click Potential** using standard organic benchmark click curves (projecting CTR to 10% if optimized).")
         
-        col_sel1, col_sel2 = st.columns(2)
-        with col_sel1:
-            intel_type = st.radio("Target Metric Base", ["Queries", "Pages"])
-        with col_sel2:
-            rank_range = st.slider("Select Position Range", 4.0, 20.0, (4.0, 15.0))
-            
-        df_target = queries_df if intel_type == "Queries" else pages_df
-        label_col = 'Top queries' if intel_type == "Queries" else 'Top pages'
+        target_mode = st.radio("Target Element", ["Queries", "Pages"], horizontal=True)
+        bench_ctr = st.slider("Projected Position Benchmarked CTR (%)", 1.0, 30.0, 10.0) / 100
         
-        striking_df = df_target[
-            (df_target['Position'] >= rank_range[0]) & 
-            (df_target['Position'] <= rank_range[1])
-        ].copy()
+        df_target = queries_df if target_mode == "Queries" else pages_df
+        label_col = 'Top queries' if target_mode == "Queries" else 'Top pages'
         
-        # Sort by impressions to focus on search volume potential
-        striking_df = striking_df.sort_values('Impressions', ascending=False)
-        striking_df['CTR'] = striking_df['CTR'] * 100
+        striking = df_target[(df_target['Position'] >= 4) & (df_target['Position'] <= 15)].copy()
+        
+        # Calculate potential clicks and uplift
+        striking['Projected Clicks'] = striking['Impressions'] * bench_ctr
+        striking['Uplift Potential (Clicks)'] = striking['Projected Clicks'] - striking['Clicks']
+        
+        # Format and display
+        striking_out = striking.sort_values('Uplift Potential (Clicks)', ascending=False).copy()
+        striking_out['CTR'] = striking_out['CTR'] * 100
+        striking_out['Projected Clicks'] = striking_out['Projected Clicks'].apply(lambda x: max(0, x))
+        striking_out['Uplift Potential (Clicks)'] = striking_out['Uplift Potential (Clicks)'].apply(lambda x: max(0, x))
         
         st.dataframe(
-            striking_df.style.format({
+            striking_out.style.format({
                 "Clicks": "{:,.0f}",
                 "Impressions": "{:,.0f}",
                 "CTR": "{:.2f}%",
-                "Position": "{:.2f}"
+                "Position": "{:.2f}",
+                "Projected Clicks": "{:,.0f}",
+                "Uplift Potential (Clicks)": "{:,.0f}"
             }),
             use_container_width=True
         )
         
-    elif report_type == "💡 Rich Snippet & Search Appearance Leaderboard":
-        sa_df = gsc_data.get('search_appearance')
-        if sa_df is not None:
-            st.markdown("#### Search Appearance Optimization")
-            st.markdown("Identify which search features (snippets, video, review stars) are performing best.")
+    elif intel_mode == "📉 Content Decay Alert (API Feature Simulation)":
+        st.markdown('<div class="api-badge">GSC API Integration Preview</div>', unsafe_allow_html=True)
+        st.markdown("#### Page Traffic Loss Tracker (Content Decay)")
+        st.markdown(
+            "Detects pages whose performance has steadily declined in the second half of the date range compared to the first half."
+        )
+        
+        # Because we only have static totals in GSC Excel export, we simulate decay for demonstration
+        pages_df = gsc_data.get('pages')
+        if pages_df is not None:
+            # We seed a random generator using the page name to make it deterministic but realistic
+            decay_data = []
+            for idx, row in pages_df.head(15).iterrows():
+                # Deterministic simulation based on index/page name
+                np.random.seed(idx)
+                drift = np.random.uniform(-0.4, 0.15)
+                # Create previous clicks and current clicks
+                curr_clicks = row['Clicks']
+                prev_clicks = curr_clicks / (1 + drift)
+                loss = curr_clicks - prev_clicks
+                decay_data.append({
+                    "Page URL": row['Top pages'],
+                    "Current Period Clicks": int(curr_clicks),
+                    "Previous Period Clicks": int(prev_clicks),
+                    "Absolute Click Change": int(loss),
+                    "Percentage Change": drift * 100
+                })
+                
+            decay_df = pd.DataFrame(decay_data).sort_values("Absolute Click Change")
             
-            # Format and display
-            sa_formatted = sa_df.copy()
-            sa_formatted['CTR'] = sa_formatted['CTR'] * 100
+            # Show decaying pages first (those with negative changes)
+            decaying_only = decay_df[decay_df['Absolute Click Change'] < 0].copy()
+            
+            fig_decay = px.bar(
+                decaying_only,
+                x='Absolute Click Change',
+                y='Page URL',
+                orientation='h',
+                color='Percentage Change',
+                color_continuous_scale='Reds_r',
+                title="Top Decaying Landing Pages (Click Loss)"
+            )
+            st.plotly_chart(fig_decay, use_container_width=True)
             
             st.dataframe(
-                sa_formatted.style.format({
-                    "Clicks": "{:,.0f}",
-                    "Impressions": "{:,.0f}",
-                    "CTR": "{:.2f}%",
-                    "Position": "{:.2f}"
+                decaying_only.style.format({
+                    "Current Period Clicks": "{:,.0f}",
+                    "Previous Period Clicks": "{:,.0f}",
+                    "Absolute Click Change": "{:,.0f}",
+                    "Percentage Change": "{:.2f}%"
                 }),
                 use_container_width=True
             )
             
-            # Plot
-            fig_sa = px.bar(
-                sa_df,
-                x='Search Appearance',
-                y='Clicks',
-                color='CTR',
-                title="Clicks generated by Special Search Appearances"
-            )
-            st.plotly_chart(fig_sa, use_container_width=True)
-        else:
-            st.info("No search appearance data found in the export sheet.")
+    elif intel_mode == "📱 Device CTR Discrepancy Analysis":
+        st.markdown("#### Device CTR and Ranking Correlation")
+        st.markdown("Analyze whether rankings correspond to identical CTR rates across Mobile, Desktop, and Tablet.")
+        
+        device_df = gsc_data.get('devices')
+        if device_df is not None:
+            dev_formatted = device_df.copy()
+            dev_formatted['CTR'] = dev_formatted['CTR'] * 100
+            
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.markdown("**Device Metrics Summary**")
+                st.dataframe(
+                    dev_formatted.style.format({
+                        "Clicks": "{:,.0f}",
+                        "Impressions": "{:,.0f}",
+                        "CTR": "{:.2f}%",
+                        "Position": "{:.2f}"
+                    }),
+                    use_container_width=True
+                )
+            with col_d2:
+                # Plot CTR side-by-side with Position
+                fig_dis = go.Figure()
+                fig_dis.add_trace(go.Bar(
+                    x=dev_formatted['Device'],
+                    y=dev_formatted['CTR'],
+                    name="CTR (%)",
+                    marker_color="#8a2be2"
+                ))
+                fig_dis.add_trace(go.Scatter(
+                    x=dev_formatted['Device'],
+                    y=dev_formatted['Position'],
+                    name="Avg Position",
+                    yaxis="y2",
+                    line=dict(color="#ff007f", width=4)
+                ))
+                fig_dis.update_layout(
+                    title="Device CTR vs Average Position",
+                    yaxis=dict(title="CTR (%)"),
+                    yaxis2=dict(title="Average Position", overlaying="y", side="right", autorange="reversed"),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="white")
+                )
+                st.plotly_chart(fig_dis, use_container_width=True)
