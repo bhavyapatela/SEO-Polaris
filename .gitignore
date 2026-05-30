@@ -1,3 +1,5 @@
-whistle_data.xlsx
-temp_upload.xlsx
-__pycache__
+Data/whistle_data.xlsx
+Data/temp_upload.xlsx
+
+__pycache__/
+*.pyc
